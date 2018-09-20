@@ -7,4 +7,4 @@ gitlab.com/gopherburrow/proxyheaders
 
 ![Gopher Burrow Logo](https://gitlab.com/gopherburrow/art/raw/master/gopherburrow.png)
 
-`gitlab.com/gopherburrow/proxyheaders` Package proxyheaders contains Proxy Headers Utilites. Most of it functions handle Proxy generated headers and convert them to `http.Request` properties.
+`gitlab.com/gopherburrow/proxyheaders` contains Proxy Headers Utilites. Most of it functions handle Proxy generated headers and convert them to `http.Request` properties.
