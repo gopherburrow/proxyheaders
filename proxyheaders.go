@@ -149,17 +149,17 @@ type XForwardedHandler struct {
 }
 
 //ServeHTTP is the method that dispatches requests that came from proxies, transform the headers in the according http.Request fields,
-//and dispatches for the Handler or, in case of errors the error Handlers will be called.
+//and dispatches for the Handler or, in case of errors the ErrorHandler will be called.
 func (xfhh *XForwardedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	//Tranlate the headers in request fields.
-	tr, err := xForwardedRequest(r)
-
 	//In case of no Handler defined a 404 Not Implemented will be served. It is not possible override this
-	//behavior because it is not the objective os this handler.
-	if err == nil && xfhh.Handler == nil {
+	//behavior because this is symply NOT THE OBJECTIVE of this handler.
+	if xfhh.Handler == nil {
 		http.Error(w, fmt.Sprintf("%d - %s", http.StatusNotFound, http.StatusText(http.StatusNotFound)), http.StatusNotFound)
 		return
 	}
+
+	//Tranlate the headers in request fields.
+	tr, err := xForwardedRequest(r)
 
 	//If there is no error simply serve the handler.
 	if err == nil {
