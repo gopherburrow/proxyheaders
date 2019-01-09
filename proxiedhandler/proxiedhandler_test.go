@@ -13,18 +13,17 @@
 // You should have received a copy of the GNU Lesser General Public License
 // along with Gopher Burrow Proxy Headers Utilities.  If not, see <http://www.gnu.org/licenses/>.
 
-//Package proxyheaders_test contains Proxy Headers Utilites tests.
-package proxyheaders_test
+//Package proxiedhandler_test contains Proxy Headers Utility Handlers tests.
+package proxiedhandler_test
 
 import (
-	"crypto/tls"
-	"crypto/x509"
-	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"gitlab.com/gopherburrow/proxyheaders"
+	"gitlab.com/gopherburrow/proxyheaders/proxiedhandler"
 )
 
 const validCert = `
@@ -175,27 +174,37 @@ PgNj8cl6ndHEvt4IlMpLPQ==
 -----END CERTIFICATE-----
 `
 
-func TestInjectIntoNewRequest_Success(t *testing.T) {
+func ErrorHandlerFunc(w http.ResponseWriter, r *http.Request) {
+	err := proxiedhandler.Error(r)
+	if err == nil {
+		http.Error(w, "500 - Error Not Found", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusBadRequest)
+	fmt.Fprint(w, err.Error())
+}
+
+func DumpServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "text/plain;charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+}
+
+func TestProxiedHandler_ServeHTTP_Success(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler: http.HandlerFunc(DumpServeHTTP),
+	}
+
 	{
 		req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
 		req.Header.Add("X-Forwarded-For", "1.2.3.4")
 		req.Header.Add("X-Forwarded-Host", "www.example.com")
 		req.Header.Add("X-Forwarded-Proto", "http")
 
-		pr, err := proxyheaders.InjectIntoNewRequest(req)
-		if want, got := error(nil), err; want != got {
+		rr := httptest.NewRecorder()
+		xfh.ServeHTTP(rr, req)
+		if want, got := http.StatusOK, rr.Code; want != got {
 			t.Fatalf("want=%d, got=%d", want, got)
-		}
-
-		if want, got := "1.2.3.4", pr.RemoteAddr; want != got {
-			t.Fatalf("want=%s, got=%s", want, got)
-		}
-
-		if want, got := "www.example.com", pr.Host; want != got {
-			t.Fatalf("want=%s, got=%s", want, got)
-		}
-		if want, got := (*tls.ConnectionState)(nil), pr.TLS; want != got {
-			t.Fatalf("want=nil, got!=nil")
 		}
 	}
 
@@ -206,21 +215,9 @@ func TestInjectIntoNewRequest_Success(t *testing.T) {
 		req.Header.Add("X-Forwarded-Proto", "https")
 
 		rr := httptest.NewRecorder()
-		pr, err := proxyheaders.InjectIntoNewRequest(req)
-		if want, got := error(nil), err; want != got {
-			t.Fatalf("want=%d, got=%d", want, got)
-		}
-
+		xfh.ServeHTTP(rr, req)
 		if want, got := http.StatusOK, rr.Code; want != got {
 			t.Fatalf("want=%d, got=%d", want, got)
-		}
-
-		if want, got := "www.example.com", pr.Host; want != got {
-			t.Fatalf("want=%s, got=%s", want, got)
-		}
-
-		if notwant, got := (*tls.ConnectionState)(nil), pr.TLS; notwant == got {
-			t.Fatalf("notwant=nil, got=nil")
 		}
 	}
 
@@ -231,110 +228,144 @@ func TestInjectIntoNewRequest_Success(t *testing.T) {
 		req.Header.Add("X-Forwarded-Proto", "https")
 		req.Header.Add("X-Forwarded-Client-Cert", validCert)
 
-		pr, err := proxyheaders.InjectIntoNewRequest(req)
-
-		if want, got := error(nil), err; want != got {
+		rr := httptest.NewRecorder()
+		xfh.ServeHTTP(rr, req)
+		if want, got := http.StatusOK, rr.Code; want != got {
 			t.Fatalf("want=%d, got=%d", want, got)
-		}
-
-		if want, got := "www.example.com", pr.Host; want != got {
-			t.Fatalf("want=%s, got=%s", want, got)
-		}
-
-		if notwant, got := (*tls.ConnectionState)(nil), pr.TLS; notwant == got {
-			t.Fatalf("notwant=nil, got=nil")
-		}
-
-		var block *pem.Block
-		pemRemainder := []byte(validCert)
-		certs := make([]*x509.Certificate, 0)
-		for {
-			block, pemRemainder = pem.Decode(pemRemainder)
-			if block == nil {
-				break
-			}
-			cert, err := x509.ParseCertificate(block.Bytes)
-			if want, got := error(nil), err; want != got {
-				t.Fatalf("want=%d, got=%d", want, got)
-			}
-			certs = append(certs, cert)
-		}
-
-		if want, got := certs, pr.TLS.PeerCertificates; !certificatesAreEqual(want, got) {
-			t.Fatalf("certificatesAreEqual(wat, got) is false")
 		}
 	}
 }
 
-func TestInjectIntoNewRequest_failMustHaveXForwardedHost(t *testing.T) {
+func TestProxiedHandler_ServeHTTP_failMustHaveXForwardedHostWithUndefinedErrorHandler(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler: http.HandlerFunc(DumpServeHTTP),
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
 	req.Header.Add("X-Forwarded-For", "1.2.3.4")
 	req.Header.Add("X-Forwarded-Proto", "https")
 	req.Header.Add("X-Forwarded-Client-Cert", validCert)
-	pr, err := proxyheaders.InjectIntoNewRequest(req)
-	if want, got := (*http.Request)(nil), pr; want != got {
-		t.Fatalf("want=nil, got!=nil")
+
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusBadRequest, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
+	}
+}
+
+func TestProxiedHandler_ServeHTTP_failMustHaveXForwardedHost(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler:      http.HandlerFunc(DumpServeHTTP),
+		ErrorHandler: http.HandlerFunc(ErrorHandlerFunc),
 	}
 
-	if want, got := proxyheaders.ErrMustHaveXForwardedHost, err; want != got {
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
+	req.Header.Add("X-Forwarded-For", "1.2.3.4")
+	req.Header.Add("X-Forwarded-Proto", "https")
+	req.Header.Add("X-Forwarded-Client-Cert", validCert)
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusBadRequest, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
+	}
+
+	if want, got := proxyheaders.ErrMustHaveXForwardedHost.Error(), rr.Body.String(); want != got {
 		t.Fatalf("want='%q', got='%q'", want, got)
 	}
 }
 
-func TestInjectIntoNewRequest_failMustHaveXForwardedFor(t *testing.T) {
+func TestProxiedHandler_ServeHTTP_failMustHaveXForwardedFor(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler:      http.HandlerFunc(DumpServeHTTP),
+		ErrorHandler: http.HandlerFunc(ErrorHandlerFunc),
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
 	req.Header.Add("X-Forwarded-Host", "www.example.com")
 	req.Header.Add("X-Forwarded-Proto", "https")
 	req.Header.Add("X-Forwarded-Client-Cert", validCert)
-	pr, err := proxyheaders.InjectIntoNewRequest(req)
-	if want, got := (*http.Request)(nil), pr; want != got {
-		t.Fatalf("want=nil, got!=nil")
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusBadRequest, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
 	}
-	if want, got := proxyheaders.ErrMustHaveXForwardedFor, err; want != got {
+	if want, got := proxyheaders.ErrMustHaveXForwardedFor.Error(), rr.Body.String(); want != got {
 		t.Fatalf("want=%q, got=%q", want, got)
 	}
 }
 
-func TestInjectIntoNewRequest_failMustHaveXForwardedProto(t *testing.T) {
+func TestProxiedHandler_ServeHTTP_failMustHaveXForwardedProto(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler:      http.HandlerFunc(DumpServeHTTP),
+		ErrorHandler: http.HandlerFunc(ErrorHandlerFunc),
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
 	req.Header.Add("X-Forwarded-For", "1.2.3.4")
 	req.Header.Add("X-Forwarded-Host", "www.example.com")
 	req.Header.Add("X-Forwarded-Client-Cert", validCert)
-	pr, err := proxyheaders.InjectIntoNewRequest(req)
-	if want, got := (*http.Request)(nil), pr; want != got {
-		t.Fatalf("want=nil, got!=nil")
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusBadRequest, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
 	}
-	if want, got := proxyheaders.ErrMustHaveXForwardedProto, err; want != got {
+	if want, got := proxyheaders.ErrMustHaveXForwardedProto.Error(), rr.Body.String(); want != got {
 		t.Fatalf("want=%q, got=%q", want, got)
 	}
 }
 
-func TestInjectIntoNewRequest_failInvalidXForwardedClientCert(t *testing.T) {
+func TestProxiedHandler_ServeHTTP_failInvalidXForwardedClientCert(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler:      http.HandlerFunc(DumpServeHTTP),
+		ErrorHandler: http.HandlerFunc(ErrorHandlerFunc),
+	}
+
 	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
 	req.Header.Add("X-Forwarded-For", "1.2.3.4")
 	req.Header.Add("X-Forwarded-Host", "www.example.com")
 	req.Header.Add("X-Forwarded-Proto", "https")
 	req.Header.Add("X-Forwarded-Client-Cert", invalidCert)
 
-	pr, err := proxyheaders.InjectIntoNewRequest(req)
-	if want, got := (*http.Request)(nil), pr; want != got {
-		t.Fatalf("want=nil, got!=nil")
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusBadRequest, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
 	}
-	if want, got := proxyheaders.ErrXForwardedClientCertMustBeValid, err; want != got {
+	if want, got := proxyheaders.ErrXForwardedClientCertMustBeValid.Error(), rr.Body.String(); want != got {
 		t.Fatalf("want=%q, got=%q", want, got)
 	}
 }
 
-// Equal tells whether a and b contain the same elements.
-// A nil argument is equivalent to an empty slice.
-func certificatesAreEqual(a, b []*x509.Certificate) bool {
-	if len(a) != len(b) {
-		return false
+func TestProxiedHandler_ServeHTTP_failUndefinedHandler(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{}
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
+	req.Header.Add("X-Forwarded-For", "1.2.3.4")
+	req.Header.Add("X-Forwarded-Host", "www.example.com")
+	req.Header.Add("X-Forwarded-Proto", "https")
+	req.Header.Add("X-Forwarded-Client-Cert", validCert)
+
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusNotFound, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
 	}
-	for i, v := range a {
-		if !v.Equal(b[i]) {
-			return false
-		}
+}
+
+func TestProxiedHandler_GetError_failCalledOutsideErrorHandler(t *testing.T) {
+	xfh := &proxiedhandler.ProxiedHandler{
+		Handler: http.HandlerFunc(ErrorHandlerFunc),
 	}
-	return true
+
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/", nil)
+	req.Header.Add("X-Forwarded-For", "1.2.3.4")
+	req.Header.Add("X-Forwarded-Host", "www.example.com")
+	req.Header.Add("X-Forwarded-Proto", "https")
+	req.Header.Add("X-Forwarded-Client-Cert", validCert)
+
+	rr := httptest.NewRecorder()
+	xfh.ServeHTTP(rr, req)
+	if want, got := http.StatusInternalServerError, rr.Code; want != got {
+		t.Fatalf("want=%d, got=%d", want, got)
+	}
 }
