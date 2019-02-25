@@ -40,8 +40,8 @@ var (
 	ErrXForwardedClientCertMustBeValid = errors.New("proxyheaders: cannot parse the PEM encoded X.509 certificates in X-Forwarded-Client-Cert header")
 )
 
-//InjectIntoNewRequest process the headers X-Forwarded-*, embed their values in a new request copied from r and return it, handling the errors.
-func InjectIntoNewRequest(r *http.Request) (*http.Request, error) {
+//NewProxiedRequest process the headers X-Forwarded-*, embed their values in a new request copied from r and return it, handling the errors.
+func NewProxiedRequest(r *http.Request) (*http.Request, error) {
 	//Some Constants used in namespaces and error strings.
 	//Extract and test the expected X-Forwarded-* headers, returning errors if any of them are missed.
 	xfh := r.Header.Get("X-Forwarded-Host")

@@ -61,7 +61,7 @@ type ProxiedHandler struct {
 	//ErrorHandler that will be called in case of any required proxy headers are absent or malformed or
 	//any error during the parsing of certificates.
 	//It is possible to retrieve the error in the request with the request context value: .
-	//If nil a vanilla "400 - Bad Request" will be served.
+	//If nil, a vanilla "400 - Bad Request" will be served.
 	ErrorHandler http.Handler
 }
 
@@ -76,11 +76,11 @@ func (ph *ProxiedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//Tranlate the headers in request fields.
-	tr, err := proxyheaders.InjectIntoNewRequest(r)
+	pr, err := proxyheaders.NewProxiedRequest(r)
 
 	//If there is no error simply serve the handler.
 	if err == nil {
-		ph.Handler.ServeHTTP(w, tr)
+		ph.Handler.ServeHTTP(w, pr)
 		return
 	}
 
